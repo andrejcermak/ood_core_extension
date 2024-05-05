@@ -3,6 +3,7 @@ require "ood_core/refinements/array_extensions"
 require 'net/http'
 require 'json'
 require 'etc'
+require_relative 'coder_job_info'
 
 module OodCore
   module Job
@@ -40,18 +41,59 @@ module OodCore
             name: workspace_name
           }
 
-          api_call('post', endpoint, headers, body)
+          resp = api_call('post', endpoint, headers, body)
+          resp["id"]
         end
-        def delete(workspace_name, org_id, token)
-          endpoint = "https://#{@host}/api/v2/organizations/#{org_id}/members/#{username}/workspaces/#{workspace_name}"
+        def delete(id)
+          endpoint = "https://#{@host}/api/v2/workspaces/#{id}/builds"
           #raise JobAdapterError, endpoint
+
+          headers = {
+            'Content-Type' => 'application/json',
+            'Accept' => 'application/json',
+            'Coder-Session-Token' => @token
+          }
+          body = {
+            'orphan' => false,
+            'transition' => 'delete'
+          }
+          res = api_call('post', endpoint, headers, body)
+          #raise "HTTP Error #{res}"
+        end
+        def info(id)
+          endpoint = "https://#{@host}/api/v2/workspaces/#{id}?include_deleted=true"
+
           headers = {
             'Content-Type' => 'application/json',
             'Accept' => 'application/json',
             'Coder-Session-Token' => @token
           }
 
-          api_call('delete', endpoint, headers)
+          workspace_info_from_json(api_call('get', endpoint, headers))
+        end
+        def workspace_info_from_json(json_data)
+          state = json_data.dig("latest_build", "status") || json_data.dig("latest_build", "job", "status")
+          status = case state
+            when "pending"
+              "queued"
+            when "stopped"
+              "suspended"
+            when "running"
+              "running"
+            when "deleted"
+              "completed"
+            else
+              "undetermined"
+            end
+          OodCore::Job::Adapters::CoderJobInfo.new(**{
+            id: json_data["id"],
+            job_name: json_data["workspace_name"],
+            status: OodCore::Job::Status.new(state:status),
+            job_owner: json_data["workspace_owner_name"],
+            submission_time: json_data["created_at"],
+            dispatch_time: 0,
+            wallclock_time: 0
+          })
         end
         def api_call(method, endpoint, headers, body = nil)
           uri = URI(endpoint)
@@ -77,7 +119,7 @@ module OodCore
           when Net::HTTPSuccess
             JSON.parse(response.body)
           else
-            raise "HTTP Error: #{response.code} #{response.message} for request #{endpoint} and body #{body}"
+            raise "HTTP Error: #{response.code} #{response.message}  for request #{endpoint} and body #{body}"
           end
         end
         def username
@@ -128,7 +170,6 @@ module OodCore
           workspace_name = script.native[:workspace_name]
           template_version_id = script.native[:template_version_id]
           org_id = script.native[:org_id]
-          #token = script.native[:token]
           batch.submit(workspace_name, template_version_id, org_id)
         # rescue Batch::Error => e
         #  raise JobAdapterError, e.message
@@ -236,7 +277,7 @@ module OodCore
         # @param id [#to_s] the id of the job
         # @return [Status] status of job
         def status(id)
-          info(id).status
+          info(id)["job"]["status"]
         end
 
         # Put the submitted job on hold
@@ -263,7 +304,7 @@ module OodCore
         # @return [void]
         def delete(id)
         # TODO - implement delete for deployment
-          batch.method_missing(id.to_s)
+          res = batch.delete(id)
         #rescue Batch::Error => e
         #  raise JobAdapterError, e.message
         end
