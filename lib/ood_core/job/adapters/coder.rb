@@ -29,16 +29,22 @@ module OodCore
           # Mocked response
           puts "Called #{m} with #{args.inspect}"
         end
-        def submit(workspace_name, template_version_id, org_id)
-          endpoint = "https://#{@host}/api/v2/organizations/#{org_id}/members/#{username}/workspaces"
+        def submit(workspace_name, template_id, template_version_name, oidc_access_token, org_id)          endpoint = "https://#{@host}/api/v2/organizations/#{org_id}/members/#{username}/workspaces"
           headers = {
             'Content-Type' => 'application/json',
             'Accept' => 'application/json',
             'Coder-Session-Token' => @token
           }
           body = {
-            template_version_id: template_version_id,
-            name: workspace_name
+            template_id: template_id,
+            template_version_name: template_version_name,
+            name: workspace_name,
+            rich_parameter_values: [
+                {
+                        name: "Token",
+                        value: oidc_access_token
+                }
+                ]
           }
 
           resp = api_call('post', endpoint, headers, body)
@@ -170,8 +176,7 @@ module OodCore
           workspace_name = script.native[:workspace_name]
           template_version_id = script.native[:template_version_id]
           org_id = script.native[:org_id]
-          batch.submit(workspace_name, template_version_id, org_id)
-        # rescue Batch::Error => e
+          batch.submit(workspace_name, template_id, template_version_name, oidc_access_token, org_id)        # rescue Batch::Error => e
         #  raise JobAdapterError, e.message
         end
 
