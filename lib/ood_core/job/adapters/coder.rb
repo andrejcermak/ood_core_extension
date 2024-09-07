@@ -74,7 +74,7 @@ module OodCore
         def workspace_info_from_json(json_data)
           state = json_data.dig("latest_build", "status") || json_data.dig("latest_build", "job", "status")
           status = case state
-            when "pending"
+            when "starting"
               "queued"
             when "stopped"
               "suspended"
