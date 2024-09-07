@@ -174,10 +174,11 @@ module OodCore
         def submit(script, after: [], afterok: [], afternotok: [], afterany: [])
           raise ArgumentError, 'Must specify the script' if script.nil?
           workspace_name = script.native[:workspace_name]
-          template_version_id = script.native[:template_version_id]
+          template_id = script.native[:template_id]
+          template_version_name = script.native[:template_version_name]
+          oidc_access_token = script.native[:oidc_access_token]
           org_id = script.native[:org_id]
-          batch.submit(workspace_name, template_id, template_version_name, oidc_access_token, org_id)        # rescue Batch::Error => e
-        #  raise JobAdapterError, e.message
+          batch.submit(workspace_name, template_id, template_version_name, oidc_access_token, org_id)        #  raise JobAdapterError, e.message
         end
 
 
