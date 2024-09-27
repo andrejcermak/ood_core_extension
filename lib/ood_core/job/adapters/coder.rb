@@ -3,7 +3,6 @@ require "ood_core/refinements/array_extensions"
 require 'net/http'
 require 'json'
 require 'etc'
-require_relative 'coder_job_info'
 
 module OodCore
   module Job
@@ -11,7 +10,7 @@ module OodCore
       using Refinements::HashExtensions
 
       def self.build_coder(config)
-        batch = Adapters::MockedAPI.new(config.to_h.symbolize_keys)
+        batch = Adapters::Coder::Batch.new(config.to_h.symbolize_keys)
         Adapters::Coder.new(batch)
       end
     end
@@ -19,119 +18,6 @@ module OodCore
     module Adapters
       attr_reader :host, :token
 
-      class MockedAPI
-        def initialize(config)
-          #raise JobAdapterError, config
-          @host = config[:host]
-          @token = config[:token]
-        end
-        def method_missing(m, *args, &block)
-          # Mocked response
-          puts "Called #{m} with #{args.inspect}"
-        end
-        def submit(workspace_name, template_id, template_version_name, oidc_access_token, org_id)          endpoint = "https://#{@host}/api/v2/organizations/#{org_id}/members/#{username}/workspaces"
-          headers = {
-            'Content-Type' => 'application/json',
-            'Accept' => 'application/json',
-            'Coder-Session-Token' => @token
-          }
-          body = {
-            template_id: template_id,
-            template_version_name: template_version_name,
-            name: workspace_name,
-            rich_parameter_values: [
-                {
-                        name: "Token",
-                        value: oidc_access_token
-                }
-                ]
-          }
-
-          resp = api_call('post', endpoint, headers, body)
-          resp["id"]
-        end
-        def delete(id)
-          endpoint = "https://#{@host}/api/v2/workspaces/#{id}/builds"
-          #raise JobAdapterError, endpoint
-
-          headers = {
-            'Content-Type' => 'application/json',
-            'Accept' => 'application/json',
-            'Coder-Session-Token' => @token
-          }
-          body = {
-            'orphan' => false,
-            'transition' => 'delete'
-          }
-          res = api_call('post', endpoint, headers, body)
-          #raise "HTTP Error #{res}"
-        end
-        def info(id)
-          endpoint = "https://#{@host}/api/v2/workspaces/#{id}?include_deleted=true"
-
-          headers = {
-            'Content-Type' => 'application/json',
-            'Accept' => 'application/json',
-            'Coder-Session-Token' => @token
-          }
-
-          workspace_info_from_json(api_call('get', endpoint, headers))
-        end
-        def workspace_info_from_json(json_data)
-          state = json_data.dig("latest_build", "status") || json_data.dig("latest_build", "job", "status")
-          status = case state
-            when "starting"
-              "queued"
-            when "stopped"
-              "suspended"
-            when "running"
-              "running"
-            when "deleted"
-              "completed"
-            else
-              "undetermined"
-            end
-          OodCore::Job::Adapters::CoderJobInfo.new(**{
-            id: json_data["id"],
-            job_name: json_data["workspace_name"],
-            status: OodCore::Job::Status.new(state:status),
-            job_owner: json_data["workspace_owner_name"],
-            submission_time: json_data["created_at"],
-            dispatch_time: 0,
-            wallclock_time: 0
-          })
-        end
-        def api_call(method, endpoint, headers, body = nil)
-          uri = URI(endpoint)
-
-          case method.downcase
-          when 'get'
-            request = Net::HTTP::Get.new(uri, headers)
-          when 'post'
-            request = Net::HTTP::Post.new(uri, headers)
-          when 'delete'
-            request = Net::HTTP::Delete.new(uri, headers)
-          else
-            raise ArgumentError, "Invalid HTTP method: #{method}"
-          end
-
-          request.body = body.to_json if body
-
-          response = Net::HTTP.start(uri.hostname, uri.port, use_ssl: uri.scheme == 'https') do |http|
-            http.request(request)
-          end
-
-          case response
-          when Net::HTTPSuccess
-            JSON.parse(response.body)
-          else
-            raise "HTTP Error: #{response.code} #{response.message}  for request #{endpoint} and body #{body}"
-          end
-        end
-        def username
-          @username ||= Etc.getlogin
-        end
-      end
       # The adapter class for Kubernetes.
       class Coder < Adapter
 
@@ -178,7 +64,8 @@ module OodCore
           template_version_name = script.native[:template_version_name]
           oidc_access_token = script.native[:oidc_access_token]
           org_id = script.native[:org_id]
-          batch.submit(workspace_name, template_id, template_version_name, oidc_access_token, org_id)        #  raise JobAdapterError, e.message
+          coder_parameters = script.native[:coder_parameters]
+          batch.submit(workspace_name, template_id, template_version_name, oidc_access_token, org_id, coder_parameters)        # rescue Batch::Error => e
         end
 
 

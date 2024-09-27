@@ -1,4 +1,4 @@
-class OodCore::Job::Adapters::CoderJobInfo < OodCore::Job::Info
+class OodCore::Job::Adapters::Coder::CoderJobInfo < OodCore::Job::Info
     attr_reader :ood_connection_info
   
     def initialize(options)
