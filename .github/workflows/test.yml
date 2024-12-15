@@ -13,10 +13,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ruby: ["2.5.1", "2.7.1"]
+        ruby: ["2.7.1"]
         bundler: ["2.1.4"]
         include:
           - ruby: "3.0.2"
+            bundler: "2.3.5"
+          - ruby: "3.1"
+            bundler: "2.3.5"
+          - ruby: "3.2"
             bundler: "2.3.5"
     runs-on: ubuntu-latest
     steps:
@@ -32,5 +36,8 @@ jobs:
       - name: install gems
         run: bundle install
 
-      - name: test
+      - name: rspec test
         run: bundle exec rake spec
+
+      - name: mini test
+        run: bundle exec rake test
