@@ -41,7 +41,7 @@ module OodCore
         # calculated from gres string
         # @return [Integer] the number of gpus in gres
         def self.gpus_from_gres(gres)
-          gres.to_s.scan(/gpu:[^,]*(\d+)/).flatten.map(&:to_i).sum
+          gres.to_s.scan(/gpu[^(,]*[:=](\d+)/).flatten.map(&:to_i).sum
         end
 
         # Object used for simplified communication with a Slurm batch server
@@ -169,6 +169,7 @@ module OodCore
                 # jobs << job
                 #
                 # assuming keys and values are same length! if not we have an error!
+                line = line.encode('UTF-8', invalid: :replace, undef: :replace)
                 values = line.chomp(RECORD_SEPARATOR).strip.split(UNIT_SEPARATOR)
                 jobs << Hash[fields.keys.zip(values)] unless values.empty?
               end
