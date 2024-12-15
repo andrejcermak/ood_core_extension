@@ -7,7 +7,7 @@ class OodCore::Job::Adapters::Kubernetes::Batch
 
   require_relative "helper"
   require_relative "k8s_job_info"
-
+  require 'ostruct'
   using OodCore::Refinements::HashExtensions
 
   class Error < StandardError; end
@@ -20,8 +20,8 @@ class OodCore::Job::Adapters::Kubernetes::Batch
 
   def initialize(options = {})
     options = options.to_h.symbolize_keys
-
-    @config_file = options.fetch(:config_file, self.class.default_config_file)
+    @cluster_type = options.fetch(:type, 'standard')
+    @config_file = File.expand_path(options.fetch(:config_file, self.class.default_config_file))
     @bin = options.fetch(:bin, '/usr/bin/kubectl')
     @cluster = options.fetch(:cluster, 'open-ondemand')
     @mounts = options.fetch(:mounts, []).map { |m| m.to_h.symbolize_keys }
@@ -29,11 +29,24 @@ class OodCore::Job::Adapters::Kubernetes::Batch
     @username_prefix = options.fetch(:username_prefix, '')
     @namespace_prefix = options.fetch(:namespace_prefix, '')
     @auto_supplemental_groups = options.fetch(:auto_supplemental_groups, false)
+    initialize_dynamic_cluster(options) if @cluster_type == "dynamic"
 
     tmp_ctx = options.fetch(:context, nil)
     @context = tmp_ctx.nil? && oidc_auth?(options.fetch(:auth, {}).symbolize_keys) ? @cluster : tmp_ctx
 
     @helper = OodCore::Job::Adapters::Kubernetes::Helper.new
+  end
+
+  def initialize_dynamic_cluster(options)
+    defaults = options.fetch(:defaults)
+    raise Error, "Dynamic cluster specified, but missing default values" if defaults.nil?
+    user_name = defaults.fetch('username', '')
+    user_id = defaults.fetch('user_id', '')
+    user_gid = defaults.fetch('user_gid', '')
+    namespace = defaults.fetch('namespace', '')
+    @user = OpenStruct.new(dir: "/home/#{user_name}", uid: user_id, gid: user_gid)
+    @username = user_name
+    @namespace = namespace
   end
 
   def resource_file(resource_type = 'pod')
@@ -42,13 +55,11 @@ class OodCore::Job::Adapters::Kubernetes::Batch
 
   def submit(script, after: [], afterok: [], afternotok: [], afterany: [])
     raise ArgumentError, 'Must specify the script' if script.nil?
-
     resource_yml, id = generate_id_yml(script)
     if !script.workdir.nil? && Dir.exist?(script.workdir)
       File.open(File.join(script.workdir, 'pod.yml'), 'w') { |f| f.write resource_yml }
     end
     call("#{formatted_ns_cmd} create -f -", stdin: resource_yml)
-
     id
   end
 
@@ -100,13 +111,15 @@ class OodCore::Job::Adapters::Kubernetes::Batch
     service_json = safe_call('get', 'service', service_name(id))
     secret_json = safe_call('get', 'secret', secret_name(id))
 
-    helper.info_from_json(pod_json: pod_json, service_json: service_json, secret_json: secret_json)
+    info = helper.info_from_json(pod_json: pod_json, service_json: service_json, secret_json: secret_json)
+    info.ood_connection_info[:host] = host_ip if @cluster_type == "dynamic"
+    info
   end
+
 
   def status(id)
     info(id).status
   end
-
   def delete(id)
     safe_call("delete", "pod", id)
     safe_call("delete", "service", service_name(id))
@@ -133,6 +146,9 @@ class OodCore::Job::Adapters::Kubernetes::Batch
     end
 
     def configure_kube!(config)
+      if config.fetch(:type) == "dynamic"
+        return
+      end
       k = self.new(config)
       # TODO: probably shouldn't be using send here
       k.send(:set_cluster, config.fetch(:server, default_server).to_h.symbolize_keys)
@@ -155,7 +171,7 @@ class OodCore::Job::Adapters::Kubernetes::Batch
     end
   end
 
-  # helper to help format multi-line yaml data from the submit.yml into 
+  # helper to help format multi-line yaml data from the submit.yml into
   # mutli-line yaml in the pod.yml.erb
   def config_data_lines(data)
     output = []
@@ -169,6 +185,15 @@ class OodCore::Job::Adapters::Kubernetes::Batch
     output
   end
 
+  def host_ip
+    @host_ip ||= read_host_ip
+  end
+
+  def read_host_ip
+    kubeconf = File.read(@config_file)
+    match = kubeconf.match(%r{https://([^:]+)})
+    match[1] if match
+  end
   def username
     @username ||= Etc.getlogin
   end
@@ -271,7 +296,7 @@ class OodCore::Job::Adapters::Kubernetes::Batch
   end
 
   def namespace
-    "#{namespace_prefix}#{username}"
+    @namespace || "#{namespace_prefix}#{username}"
   end
 
   def formatted_ns_cmd
