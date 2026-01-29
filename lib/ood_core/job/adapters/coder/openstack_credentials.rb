@@ -79,10 +79,12 @@ class OpenStackCredentials < CredentialsInterface
   end
 
   def save_credentials(id, app_credentials)
-    File.write(file_path(id), JSON.generate(app_credentials))
-    #FileUtils.chown username, 'meta', file_path(id)
-    FileUtils.chmod 0600, file_path(id)
-
+    Tempfile.open(["temp", ".json"], "/tmp") do |temp_file|
+      temp_file.write(JSON.generate(app_credentials))
+      temp_file.chmod(0600)
+      temp_file.close
+      FileUtils.mv(temp_file.path, file_path(id))
+    end
   end
 
 
