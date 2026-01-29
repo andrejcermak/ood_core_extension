@@ -3,20 +3,24 @@ require "json"
 require "ood_core/job/adapters/coder/credentials"
 
 class OpenStackCredentials < CredentialsInterface
-  def initialize(auth_url)
+  def initialize(auth_url, dir)
     @auth_url = auth_url
+    @dir = dir
   end
 
-  def load_credentials(id, username)
-    file_path = "/home/#{username}/#{id}_credentials.json"
-    JSON.parse(File.read(file_path))
+  def load_credentials(id)
+    JSON.parse(File.read(file_path(id)))
   rescue Errno::ENOENT => e
     puts "Error loading credentials: #{e}"
     nil
   end
 
-  def generate_credentials(project_id, username)
-    token_json = JSON.parse(File.read("/home/#{username}/token.json"))
+  def file_path(id)
+    return "#{@dir}/#{username}/#{id}_credentials.json"
+  end
+
+  def generate_credentials(project_id)
+    token_json = JSON.parse(File.read("/tmp/#{username}-os-token.json"))
     access_token = token_json["id"]
     user_id = token_json["user_id"]
     connection = Fog::OpenStack::Identity.new({
@@ -74,13 +78,15 @@ class OpenStackCredentials < CredentialsInterface
 
   end
 
-  def save_credentials(id, username, app_credentials)
-    file_path = "/home/#{username}/#{id}_credentials.json"
-    File.write(file_path, JSON.generate(app_credentials))
+  def save_credentials(id, app_credentials)
+    File.write(file_path(id), JSON.generate(app_credentials))
+    #FileUtils.chown username, 'meta', file_path(id)
+    FileUtils.chmod 0600, file_path(id)
+
   end
 
 
-  def destroy_credentials(os_app_credentials, deletion_status, id, username)
+  def destroy_credentials(os_app_credentials, deletion_status, id)
     return if os_app_credentials.nil?
     
   
@@ -88,17 +94,19 @@ class OpenStackCredentials < CredentialsInterface
     credentials_to_destroy = find_os_application_credentials(connection, os_app_credentials)
   
     if deletion_status != "deleted"
-      File.delete("/home/#{username}/#{id}_credentials.json")
+      File.delete(file_path(id))
       puts "Workspace deletion timed out, credentials with id #{os_app_credentials['id']} of user #{os_app_credentials['user_id']} were not destroyed"
       return
     end
 
     begin
+      puts "Destroying application credentials with id #{os_app_credentials['id']} and session #{id}}"
       credentials_to_destroy.destroy
-    rescue Excon::Error::Forbidden => e
+    rescue Excon::Error => e
       puts "Error destroying application credentials with id #{os_app_credentials['id']} #{e}"
       raise JobAdapterError, e.message
     end
+    File.delete(file_path(id))
   end
 
 
@@ -116,4 +124,8 @@ class OpenStackCredentials < CredentialsInterface
   def find_os_application_credentials(connection, os_app_credentials)
     connection.application_credentials.find_by_id(os_app_credentials['id'], os_app_credentials['user_id'])
   end
+  def username
+    @username ||= Etc.getlogin
+  end
 end
+
