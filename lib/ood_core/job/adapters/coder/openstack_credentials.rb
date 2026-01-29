@@ -1,6 +1,7 @@
 require "fog/openstack"
 require "json"
 require "ood_core/job/adapters/coder/credentials"
+require "tempfile"
 
 class OpenStackCredentials < CredentialsInterface
   def initialize(auth_url, dir)
