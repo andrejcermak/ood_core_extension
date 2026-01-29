@@ -87,6 +87,13 @@ class OodCore::Job::Adapters::Coder::Batch
     end
   end
 
+  def extract_error_messages(logs_array)    
+    logs_array
+    .reject { |n| n[:output].to_s.empty?}
+    .map { |n| n[:output].scan(/"message":\s*"([^"]+)"/) }
+    .reject {|n| n.empty?}
+  end
+
   def workspace_json(id)
     endpoint = "#{@host}/api/v2/workspaces/#{id}?include_deleted=true"
     headers = get_headers(@token)
@@ -119,6 +126,8 @@ class OodCore::Job::Adapters::Coder::Batch
     &.find { |resource| resource["name"] == "coder_output" }
     &.dig("metadata")
     coder_output_hash = coder_output_metadata&.map { |meta| [meta["key"].to_sym, meta["value"]] }&.to_h || {}
+    build_logs = build_logs(json_data["latest_build"]["id"])
+    error_logs = extract_error_messages(build_logs)
     OodCore::Job::Adapters::Coder::CoderJobInfo.new(**{
       id: json_data["id"],
       job_name: json_data["workspace_name"],
@@ -127,7 +136,7 @@ class OodCore::Job::Adapters::Coder::Batch
       submission_time: json_data["created_at"],
       dispatch_time: json_data.dig("updated_at"),
       wallclock_time: wallclock_time(json_data, status),
-      ood_connection_info: { host: coder_output_hash[:floating_ip], port: 80 },
+      ood_connection_info: { host: coder_output_hash[:floating_ip], port: 80, error_logs: error_logs},
       native: coder_output_hash
   })
   end
