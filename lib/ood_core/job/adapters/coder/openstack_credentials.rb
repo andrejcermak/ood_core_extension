@@ -103,7 +103,7 @@ class OpenStackCredentials < CredentialsInterface
     end
 
     begin
-      puts "Destroying application credentials with id #{os_app_credentials['id']} and session #{id}}"
+      puts "Destroying application credentials with id #{os_app_credentials['id']} and session #{id}"
       credentials_to_destroy.destroy
     rescue Excon::Error => e
       puts "Error destroying application credentials with id #{os_app_credentials['id']} #{e}"
