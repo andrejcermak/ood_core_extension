@@ -10,8 +10,8 @@ class OodCore::Job::Adapters::Coder::Batch
     @host = config[:host]
     @token = config[:token]
     @service_user = config[:service_user]
-    @credential_deletion_max_attempts = config[:credential_deletion_max_attempts] || 5
-    @credential_deletion_timeout_interval = config[:credential_deletion_timeout_interval] || 10
+    @deletion_max_attempts = config[:deletion_max_attempts] || 5
+    @deletion_timeout_interval_seconds = config[:deletion_timeout_interval] || 10
     @credentials = credentials 
   end
 
@@ -43,7 +43,7 @@ class OodCore::Job::Adapters::Coder::Batch
     project_id = script.native[:project_id]
     coder_parameters = script.native[:coder_parameters]
     endpoint = "#{@host}/api/v2/organizations/#{org_id}/members/#{@service_user}/workspaces"
-    app_credentials = @credentials.generate_credentials(project_id, username)
+    app_credentials = @credentials.generate_credentials(project_id)
     headers = get_headers(@token)
     workspace_name = "#{username}-#{script.native[:workspace_name]}-#{rand(2_821_109_907_456).to_s(36)}"
     body = {
@@ -53,7 +53,7 @@ class OodCore::Job::Adapters::Coder::Batch
     }
 
     resp = api_call('post', endpoint, headers, body)
-    @credentials.save_credentials(resp["id"], username, app_credentials)
+    @credentials.save_credentials(resp["id"], app_credentials)
     resp["id"]
 
   end
@@ -67,18 +67,18 @@ class OodCore::Job::Adapters::Coder::Batch
     }
     api_call('post', endpoint, headers, body)
   
-    credentials = @credentials.load_credentials(id, username)
-  
+    credentials = @credentials.load_credentials(id)
+    puts "credentials loaded #{credentials["id"]}" 
     wait_for_workspace_deletion(id) do |attempt|
-      puts "#{Time.now.inspect} Deleting workspace (attempt #{attempt + 1}/#{5})"
+      puts "#{Time.now.inspect} Deleting workspace (attempt #{attempt}/#{5})"
     end
   
-    @credentials.destroy_credentials(credentials, workspace_json(id).dig("latest_build", "status"), id, username)
+    @credentials.destroy_credentials(credentials, workspace_json(id).dig("latest_build", "status"), id)
   end
   
   def wait_for_workspace_deletion(id)
-    max_attempts = @credential_deletion_max_attempts
-    timeout_interval = @credential_deletion_timeout_interval
+    max_attempts = @deletion_max_attempts
+    timeout_interval = @deletion_timeout_interval_seconds
   
     max_attempts.times do |attempt|
       break unless workspace_json(id) && workspace_json(id).dig("latest_build", "status") == "deleting"
