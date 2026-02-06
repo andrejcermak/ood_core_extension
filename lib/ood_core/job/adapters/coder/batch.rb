@@ -120,7 +120,11 @@ class OodCore::Job::Adapters::Coder::Batch
       "undetermined"
     end
   end
-
+  def build_logs(build_id)
+    endpoint = "#{@host}/api/v2/workspacebuilds/#{build_id}/logs"
+    headers = get_headers(@token)
+    api_call('get', endpoint, headers)
+  end
   def build_coder_job_info(json_data, status)
     coder_output_metadata = json_data["latest_build"]["resources"]
     &.find { |resource| resource["name"] == "coder_output" }
