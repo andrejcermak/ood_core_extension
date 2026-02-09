@@ -21,7 +21,7 @@ class OpenStackCredentials < CredentialsInterface
   end
 
   def generate_credentials(project_id)
-    token_json = JSON.parse(File.read("/tmp/#{username}-os-token.json"))
+    token_json = JSON.parse(File.read("/#{@dir}/#{username}-os-token.json"))
     access_token = token_json["id"]
     user_id = token_json["user_id"]
     connection = Fog::OpenStack::Identity.new({
