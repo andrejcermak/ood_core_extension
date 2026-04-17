@@ -1,9 +1,7 @@
 require "ood_core/refinements/hash_extensions"
 require "ood_core/refinements/array_extensions"
 require 'net/http'
-require 'json'
 require 'etc'
-require 'excon'
 
 
 module OodCore
