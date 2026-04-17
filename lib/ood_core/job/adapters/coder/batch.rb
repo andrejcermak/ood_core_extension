@@ -37,27 +37,40 @@ class OodCore::Job::Adapters::Coder::Batch
     }
   end
 
+  def generate_coder_workspace_name(submitted_name)
+    "#{username}-#{submitted_name}-#{rand(2_821_109_907_456).to_s(36)}"
+  end 
   def submit(script)
-    org_id = script.native[:org_id]
     project_id = script.native[:project_id]
-    coder_parameters = script.native[:coder_parameters]
-    endpoint = "#{@host}/api/v2/organizations/#{org_id}/members/#{@service_user}/workspaces"
     app_credentials = @credentials.generate_credentials(project_id)
-    headers = get_headers(@token)
-    workspace_name = "#{username}-#{script.native[:workspace_name]}-#{rand(2_821_109_907_456).to_s(36)}"
-    body = {
-      template_version_id: script.native[:template_version_id],
-      name: workspace_name,
-      rich_parameter_values: get_rich_parameters(coder_parameters, project_id, app_credentials),
-    }
+    workspace_name = generate_coder_workspace_name(script.native[:workspace_name])
+   
+    create_coder_workspace(
+      script.native[:org_id],
+      project_id,
+      script.native[:template_version_id],
+      script.native[:coder_parameters],
+      app_credentials,
+      workspace_name)
 
-    resp = api_call('post', endpoint, headers, body)
     @credentials.save_credentials(workspace_name, app_credentials)
     workspace_name
   end
 
-  def delete(id)
-    build_id = workspace_json(id)["id"]
+  def create_coder_workspace(org_id, project_id, template_version_id, coder_parameters, app_credentials, name)
+    endpoint = "#{@host}/api/v2/organizations/#{org_id}/members/#{@service_user}/workspaces"
+    headers = get_headers(@token)
+    body = {
+      template_version_id: template_version_id,
+      name: name,
+      rich_parameter_values: get_rich_parameters(coder_parameters, project_id, app_credentials),
+    }
+    api_call('post', endpoint, headers, body)
+  end
+
+
+  def delete_coder_workspace(id)
+    build_id = get_workspace_info(id)["id"]
 
     endpoint = "#{@host}/api/v2/workspaces/#{build_id}/builds"
     headers = get_headers(@token)
@@ -66,14 +79,18 @@ class OodCore::Job::Adapters::Coder::Batch
       'transition' => 'delete'
     }
     api_call('post', endpoint, headers, body)
+  end
   
+  def delete(id)
+    delete_coder_workspace(id)
+
     credentials = @credentials.load_credentials(id)
     puts "credentials loaded #{credentials["id"]}" 
     wait_for_workspace_deletion(id) do |attempt|
       puts "#{Time.now.inspect} Deleting workspace (attempt #{attempt}/#{5})"
     end
-  
-    @credentials.destroy_credentials(credentials, workspace_json(id).dig("latest_build", "status"), id)
+    workspace_info = get_workspace_info(id)
+    @credentials.destroy_credentials(credentials, workspace_status(workspace_info), id)
   end
   
   def wait_for_workspace_deletion(id)
@@ -81,27 +98,54 @@ class OodCore::Job::Adapters::Coder::Batch
     timeout_interval = @deletion_timeout_interval_seconds
   
     max_attempts.times do |attempt|
-      break unless workspace_json(id) && workspace_json(id).dig("latest_build", "status") == "deleting"
+      workspace_info = get_workspace_info(id)
+      break unless workspace_info && workspace_status(workspace_info) == "deleting"
       yield(attempt + 1)
       sleep(timeout_interval)
     end
   end
-
-  def extract_error_messages(logs_array)    
+  def workspace_status(workspace_info)
+    workspace_info.dig("latest_build", "status")
+  end
+  def parse_error_logs(logs_array)    
     logs_array
     .reject { |n| n["output"].to_s.empty?}
     .map { |n| n["output"].scan(/"message":\s*"([^"]+)"/)[0] }
     .reject {|n| n.nil?}
   end
-
-  def workspace_json(id)
+  
+  def get_workspace_info(id)
     endpoint = "#{@host}/api/v2/users/#{@service_user}/workspace/#{id}?include_deleted=true"
     headers = get_headers(@token)
     api_call('get', endpoint, headers)
   end
 
+  def read_coder_output(latest_build)
+    coder_output_metadata = latest_build.dig("resources")
+    &.find { |resource| resource["name"] == "coder_output" }
+    &.dig("metadata")
+    coder_output_metadata&.map { |meta| [meta["key"].to_sym, meta["value"]] }&.to_h || {}
+  end 
+
   def info(id)
-    workspace_info_from_json(workspace_json(id))
+    workspace_info = get_workspace_info(id)
+    latest_build = workspace_info.dig("latest_build")
+    coder_status = workspace_status(workspace_info) || latest_build.dig("job", "status")
+    ood_status = coder_state_to_ood_status(coder_status)
+    coder_output_hash = read_coder_output(latest_build)
+    build_logs = get_build_logs(latest_build.dig("id"))
+    error_logs = parse_error_logs(build_logs)
+    OodCore::Job::Adapters::Coder::CoderJobInfo.new(**{
+      id: workspace_info["id"],
+      job_name: workspace_info["workspace_name"],
+      status: OodCore::Job::Status.new(state: ood_status),
+      job_owner: workspace_info["workspace_owner_name"],
+      submission_time: workspace_info["created_at"],
+      dispatch_time: workspace_info.dig("updated_at"),
+      wallclock_time: wallclock_time(workspace_info, ood_status),
+      ood_connection_info: { host: coder_output_hash[:floating_ip], port: 80, error_logs: error_logs},
+      native: coder_output_hash
+  })
   end
 
   def coder_state_to_ood_status(coder_state)
@@ -121,30 +165,10 @@ class OodCore::Job::Adapters::Coder::Batch
     end
   end
 
-  def build_logs(build_id)
+  def get_build_logs(build_id)
     endpoint = "#{@host}/api/v2/workspacebuilds/#{build_id}/logs"
     headers = get_headers(@token)
     api_call('get', endpoint, headers)
-  end
-
-  def build_coder_job_info(json_data, status)
-    coder_output_metadata = json_data["latest_build"]["resources"]
-    &.find { |resource| resource["name"] == "coder_output" }
-    &.dig("metadata")
-    coder_output_hash = coder_output_metadata&.map { |meta| [meta["key"].to_sym, meta["value"]] }&.to_h || {}
-    build_logs = build_logs(json_data["latest_build"]["id"])
-    error_logs = extract_error_messages(build_logs)
-    OodCore::Job::Adapters::Coder::CoderJobInfo.new(**{
-      id: json_data["id"],
-      job_name: json_data["workspace_name"],
-      status: OodCore::Job::Status.new(state: status),
-      job_owner: json_data["workspace_owner_name"],
-      submission_time: json_data["created_at"],
-      dispatch_time: json_data.dig("updated_at"),
-      wallclock_time: wallclock_time(json_data, status),
-      ood_connection_info: { host: coder_output_hash[:floating_ip], port: 80, error_logs: error_logs},
-      native: coder_output_hash
-  })
   end
 
   def wallclock_time(json_data, status)
@@ -166,12 +190,6 @@ class OodCore::Job::Adapters::Coder::Batch
       et = DateTime.now.to_time.to_i
     end
     et
-  end
-
-  def workspace_info_from_json(json_data)
-    state = json_data.dig("latest_build", "status") || json_data.dig("latest_build", "job", "status")
-    status = coder_state_to_ood_status(state)
-    build_coder_job_info(json_data, status)
   end
 
   def api_call(method, endpoint, headers, body = nil)
