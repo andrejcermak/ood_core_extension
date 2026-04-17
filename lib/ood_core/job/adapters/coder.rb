@@ -81,7 +81,7 @@ module OodCore
         #   adapters can get by without populating the entire Info object
         # @return [Array<Info>] information describing submitted jobs
         def info_all(attrs: nil)
-          raise NotImplementedError, 'subclass did not define #info_all'
+          []
         end
     
         # Whether the adapter supports job arrays
